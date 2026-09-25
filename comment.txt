@@ -1,0 +1,668 @@
+I'll start by mapping both PBIP projects on disk before reading anything in depth.
+
+  Ran 2 shell commands
+
+The QA project is compact. Let me read its entire semantic model.
+
+  Read 4 files
+
+Now the QA report definition — pages and visuals.
+
+  Searched for 1 pattern, read 8 files, ran 10 shell commands
+
+Now the SOURCE report's Data Export page.
+
+  Ran 1 shell command
+
+Now let me verify what metric_name values actually exist in the QA data — searching all project files including the .pbix caches.
+
+  Searched for 3 patterns, read 4 files, ran 8 shell commands
+
+Investigation complete. No files were modified. Here's everything.
+
+---
+
+1. WHAT QA PAID SOCIAL DOES TODAY
+
+Project: QA Paid Social.pbip → QA Paid Social.Report + QA Paid Social.SemanticModel
+
+The model (3 tables, no relationships at all)
+
+┌────────────────────────────────┬─────────────────────────────────────────────────────────────┬───────────────────────────────────┬───────────────┐
+│             Table              │                            File                             │               Mode                │    Purpose    │
+├────────────────────────────────┼─────────────────────────────────────────────────────────────┼───────────────────────────────────┼───────────────┤
+│                                │                                                             │ DirectQuery BigQuery              │ The live      │
+│ int_qa_paidsocial              │ QA Paid Social.SemanticModel\definition\tables\int_qa_paids │ prj-dbi-prd-1 → ds_dbi_improvado. │ daily         │
+│                                │ ocial.tmdl                                                  │ int_qa_paidsocial                 │ comparison    │
+│                                │                                                             │                                   │ table         │
+├────────────────────────────────┼─────────────────────────────────────────────────────────────┼───────────────────────────────────┼───────────────┤
+│                                │                                                             │                                   │ Weekly Friday │
+│ snapshot_paidsocial_qa_enriche │ ...\snapshot_paidsocial_qa_enriched.tmdl                    │ DirectQuery same BQ dataset       │  snapshots +  │
+│ d                              │                                                             │                                   │ week-over-wee │
+│                                │                                                             │                                   │ k transitions │
+├────────────────────────────────┼─────────────────────────────────────────────────────────────┼───────────────────────────────────┼───────────────┤
+│                                │                                                             │                                   │ Measure       │
+│ _Measures                      │ ...\_Measures.tmdl                                          │ Calculated ROW("x",1)             │ container     │
+│                                │                                                             │                                   │ only          │
+└────────────────────────────────┴─────────────────────────────────────────────────────────────┴───────────────────────────────────┴───────────────┘
+
+model.tmdl declares only ref table lines — there are zero relationships in this model. Each visual queries one table directly.
+
+The single most important structural fact
+
+int_qa_paidsocial is long/tall format, not wide:
+
+date | account_id_4c | account_name_4c | campaign_id | campaign_name |
+channel | date_month | metric_name | conversions_4c | conversions_improvado | data_innovid
+
+Every metric is a row identified by metric_name. conversions_4c / conversions_improvado are generic value columns that hold spend as well as conversions — spend is just metric_name = "spend".
+
+This is why spend_4c is written as:
+
+dax
+spend_4c = CALCULATE(SUM(int_qa_paidsocial[conversions_4c]), int_qa_paidsocial[metric_name] = "spend")
+
+Consequence: adding a new metric requires no model change and no new DAX. It's a new value in the metric_name column in BigQuery.
+
+The three pages
+
+┌───────────────────┬────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Page name (exact) │           Folder           │                                           What it does                                           │
+├───────────────────┼────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ General           │ pages\cab87c44900ac16391ef │ 5 matrices against int_qa_paidsocial: by Channel, by Metric Name, by Date, by Account, by        │
+│                   │                            │ Campaign. Each shows spend + conversions, Innovid vs Improvado, diff and % diff with RAG icons.  │
+├───────────────────┼────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Expanded Campaign │ pages\94f1f5be46c48e857ace │ Two side-by-side raw matrices (Campaign × metric_name): one Innovid, one Improvado. No diff, no  │
+│  Validation       │                            │ %, no variance.                                                                                  │
+├───────────────────┼────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Snapshot summary  │ pages\70882d0f840627e040c6 │ Weekly health: match rate, WoW delta, newly fixed/broken, top discrepancies. All from            │
+│                   │                            │ snapshot_paidsocial_qa_enriched. Account × Day grain — no campaign at all.                       │
+└───────────────────┴────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+General page layout (top → bottom, by position.y)
+
+┌──────┬──────────────────────┬───────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────┐
+│  y   │      Visual ID       │     Grain (rows)      │                                           Values                                            │
+├──────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 270  │ 4f0dca6bad905b35c419 │ channel               │ spend_4c, spend_improvado, diff_spend, % diff spend, conversions_4c, conversions_improvado, │
+│      │                      │                       │  diff_conv, % diff conv                                                                     │
+├──────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 459  │ 9d8d103c1848efae3604 │ metric_name           │ Sum(conversions_4c), Sum(conversions_improvado), diff_conv2, % diff conv2, count_rows_4c,   │
+│      │                      │                       │ count_rows_improvado, diff_count, % diff count. Visual filter: metric_name NOT IN {'spend'} │
+├──────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 719  │ cbd89a5420622463f906 │ date_month → date     │ same 8 spend/conv measures                                                                  │
+├──────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 980  │ 9de8de5cde40d28201a7 │ account_name_4c →     │ same 8                                                                                      │
+│      │                      │ account_id_4c         │                                                                                             │
+├──────┼──────────────────────┼───────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 1240 │ 2ab350d58a1db8976358 │ campaign_name →       │ same 8. Sorted by spend_4c DESC                                                             │
+│      │                      │ campaign_id           │                                                                                             │
+└──────┴──────────────────────┴───────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Slicers on General: date (406edf…), date_month (829b2c…), channel (868671…), account_name_4c labeled "Account" (ae09a7…), data_innovid labeled "Innovid data" (a1d4a5…). There is no metric_name slicer on the General page.
+
+Colour / threshold logic (this is a key finding)
+
+The only conditional formatting is an icon on % diff spend and % diff conv (selector {"data":[{"dataViewWildcard":{"matchingOption":1}}],"metadata":"_Measures.% diff spend"}):
+
+┌──────────────────────────────┬───────────────────────┐
+│          Condition           │         Icon          │
+├──────────────────────────────┼───────────────────────┤
+│ between −0.005 and 0.005     │ CircleHigh (green)    │
+├──────────────────────────────┼───────────────────────┤
+│ 0 → 0.03, and −0.03 → 0      │ CircleMedium (yellow) │
+├──────────────────────────────┼───────────────────────┤
+│ −100 → −0.03, and 0.03 → 100 │ CircleLow (red)       │
+└──────────────────────────────┴───────────────────────┘
+
+Confirmed by the on-canvas legend textbox (cab87c…\visuals\23fc639657185e493b72):
+
+▎ Green: the differences are between -0.5% and 0.5%
+▎ Yellow: −3% to −0.5% and 0.5% to 3%
+▎ Red: > 3% or < −3%
+▎ About signs: negative = 4C higher, positive = Improvado higher
+
+There is no 5% threshold anywhere in either PBIP project. I grepped every visual.json in QA Paid Social.Report — the only numeric literals in conditional formatting are 0.005, 0.03, 0, ±100.
+
+⚠️ The legend text is wrong about signs. diff_spend = [spend_4c] - [spend_improvado], so positive = 4C/Innovid higher, not Improvado. The legend says the opposite. Worth correcting before you screenshot it for the client.
+
+---
+
+2. HOW THE DATA COMPARISON WORKS
+
+BigQuery  prj-dbi-prd-1 . ds_dbi_improvado
+│
+├── mrt_paidsocial_pivot ──────────────► "Paid Social Dashboard" PBIP (SOURCE / Data Export)
+│      (wide: one column per metric)        DirectQuery
+│
+├── int_qa_paidsocial ─────────────────► "QA Paid Social" PBIP (General, Expanded Campaign)
+│      (long: metric_name rows,             DirectQuery
+│       conversions_4c vs conversions_improvado —— join ALREADY DONE IN BIGQUERY)
+│
+└── snapshot_paidsocial_qa_enriched ───► "QA Paid Social" PBIP (Snapshot summary)
+       (weekly Friday snapshot of the above, Account × Day grain)
+
+Answers to your specific questions:
+
+- What represents Improvado? int_qa_paidsocial[conversions_improvado]. The legend textbox states explicitly: "Improvado data = mrt_paidsocial_pivot" — i.e. the Improvado side of the QA table is built from the same table the Data Export tab uses. That's why the QA and the Data Export numbers are directly comparable.
+- What represents the reference/client data? int_qa_paidsocial[conversions_4c]. The legend says: "4C data = data comes from Social Ads Manager (Jordan Cross-Platform Pacing Report for Dashboard)". The Expanded Campaign Validation page titles the conversions_4c matrix "Innovid data by campaign" (5e7ec61a52c09c6576c9) and the conversions_improvado matrix "Improvado data by campaign" (9968d03217278a45e447). So _4c = Innovid / 4C = the expected/reference side.
+- Where Spend comes from on each side: both sides, same table, same two columns — filtered to metric_name = "spend". There is no separate spend column.
+- Where Conversions come from on each side: same two columns, filtered to metric_name <> "spend". ⚠️ This means conversions_4c is a sum across all non-spend metric_names at once — a heterogeneous total (QT + EC + CartStart + …). See §7 for why this matters.
+- How campaigns are matched: Not in Power BI. int_qa_paidsocial carries a single campaign_id and a single campaign_name (no campaign_id_4c / campaign_id_improvado pair). The join is already resolved upstream in the BigQuery model. I cannot see the join key from the PBIP files.
+- How dates are matched: same — a single date column, plus a derived date_month. Resolved upstream.
+- Is account/channel part of the matching grain? The output grain is date × account_id_4c × account_name_4c × campaign_id × campaign_name × channel × metric_name. Account and channel columns are suffixed _4c, which strongly implies the 4C/Innovid values are canonical and the Improvado side was mapped onto them. Again, the actual join predicate lives in BigQuery, not in the PBIP.
+
+---
+
+3. EXISTING SPEND QA LOGIC
+
+All in QA Paid Social.SemanticModel\definition\tables\_Measures.tmdl, table _Measures.
+
+┌─────────────────┬───────────────────┬────────────────────────────────────────────────────────────────────────────┬────────────────────────────────┐
+│     Measure     │      Purpose      │                                    DAX                                     │            Used on             │
+├─────────────────┼───────────────────┼────────────────────────────────────────────────────────────────────────────┼────────────────────────────────┤
+│ spend_4c        │ Reference         │ CALCULATE(SUM(int_qa_paidsocial[conversions_4c]),                          │ General: all 4 non-metric      │
+│                 │ (Innovid) spend   │ int_qa_paidsocial[metric_name] = "spend")                                  │ matrices                       │
+├─────────────────┼───────────────────┼────────────────────────────────────────────────────────────────────────────┼────────────────────────────────┤
+│ spend_improvado │ Actual            │ CALCULATE(SUM(int_qa_paidsocial[conversions_improvado]),                   │ same                           │
+│                 │ (Improvado) spend │ int_qa_paidsocial[metric_name] = "spend")                                  │                                │
+├─────────────────┼───────────────────┼────────────────────────────────────────────────────────────────────────────┼────────────────────────────────┤
+│ diff_spend      │ Absolute gap      │ [spend_4c]-[spend_improvado]                                               │ same                           │
+├─────────────────┼───────────────────┼────────────────────────────────────────────────────────────────────────────┼────────────────────────────────┤
+│                 │                   │                                                                            │ same, formatted                │
+│ '% diff spend'  │ Variance %        │ DIVIDE([spend_4c] - [spend_improvado], [spend_4c])                         │ 0.0%;-0.0%;0.0%, RAG icon      │
+│                 │                   │                                                                            │ attached                       │
+└─────────────────┴───────────────────┴────────────────────────────────────────────────────────────────────────────┴────────────────────────────────┘
+
+>5% logic: does not exist. The only threshold logic is the ±0.5% / ±3% icon rule described in §1.
+
+Note % diff spend is signed and divides by the reference (spend_4c) — which is the correct denominator for "variance vs expected".
+
+---
+
+4. EXISTING CONVERSION QA LOGIC
+
+┌───────────────────────┬──────────────────────┬────────────────────────────────────────────────────────────────────┬───────────────────────────────┐
+│        Measure        │       Purpose        │                                DAX                                 │            Used on            │
+├───────────────────────┼──────────────────────┼────────────────────────────────────────────────────────────────────┼───────────────────────────────┤
+│                       │ Reference            │ CALCULATE(SUM(int_qa_paidsocial[conversions_4c]),                  │ General: channel / date /     │
+│ conversions_4c        │ conversions (all     │ int_qa_paidsocial[metric_name] <> "spend")                         │ account / campaign matrices   │
+│                       │ metrics summed)      │                                                                    │                               │
+├───────────────────────┼──────────────────────┼────────────────────────────────────────────────────────────────────┼───────────────────────────────┤
+│                       │ Improvado            │ CALCULATE(SUM(int_qa_paidsocial[conversions_improvado]),           │                               │
+│ conversions_improvado │ conversions (all     │ int_qa_paidsocial[metric_name] <> "spend")                         │ same                          │
+│                       │ metrics summed)      │                                                                    │                               │
+├───────────────────────┼──────────────────────┼────────────────────────────────────────────────────────────────────┼───────────────────────────────┤
+│ diff_conv             │ Gap                  │ [conversions_4c]-[conversions_improvado]                           │ same                          │
+├───────────────────────┼──────────────────────┼────────────────────────────────────────────────────────────────────┼───────────────────────────────┤
+│ '% diff conv'         │ Variance %           │ DIVIDE([conversions_4c] - [conversions_improvado],                 │ same, 0.0% format, RAG icon   │
+│                       │                      │ [conversions_4c])                                                  │                               │
+├───────────────────────┼──────────────────────┼────────────────────────────────────────────────────────────────────┼───────────────────────────────┤
+│                       │ Gap, no metric       │ sum(int_qa_paidsocial[conversions_4c]) -                           │ General → metric_name matrix  │
+│ diff_conv2            │ filter (for the      │ sum(int_qa_paidsocial[conversions_improvado])                      │ 9d8d103c…                     │
+│                       │ metric_name matrix)  │                                                                    │                               │
+├───────────────────────┼──────────────────────┼────────────────────────────────────────────────────────────────────┼───────────────────────────────┤
+│ '% diff conv2'        │ Variance %, no       │ DIVIDE(calculate(sum(...conversions_4c]) -                         │ same                          │
+│                       │ metric filter        │ sum(...conversions_improvado])), sum(...conversions_4c]))          │                               │
+├───────────────────────┼──────────────────────┼────────────────────────────────────────────────────────────────────┼───────────────────────────────┤
+│ count_rows_4c         │ Row coverage check   │ CALCULATE(COUNTROWS(int_qa_paidsocial),                            │ same                          │
+│                       │                      │ int_qa_paidsocial[conversions_4c]>0)                               │                               │
+├───────────────────────┼──────────────────────┼────────────────────────────────────────────────────────────────────┼───────────────────────────────┤
+│ count_rows_improvado  │ "                    │ CALCULATE(COUNTROWS(int_qa_paidsocial),                            │ same                          │
+│                       │                      │ int_qa_paidsocial[conversions_improvado]>0)                        │                               │
+├───────────────────────┼──────────────────────┼────────────────────────────────────────────────────────────────────┼───────────────────────────────┤
+│ diff_count            │ "                    │ [count_rows_4c]-[count_rows_improvado]                             │ same                          │
+├───────────────────────┼──────────────────────┼────────────────────────────────────────────────────────────────────┼───────────────────────────────┤
+│                       │                      │                                                                    │ same ⚠️ denominator is        │
+│ '% diff count'        │ "                    │ DIVIDE([count_rows_4c]-[count_rows_improvado],                     │ _improvado, inconsistent with │
+│                       │                      │ [count_rows_improvado])                                            │  every other % measure which  │
+│                       │                      │                                                                    │ uses _4c                      │
+└───────────────────────┴──────────────────────┴────────────────────────────────────────────────────────────────────┴───────────────────────────────┘
+
+Snapshot-page measures (separate table, Account × Day grain, no campaign): match_rate, differences, update_data, Fixed, broken, rows_checked, match_rate_last_week, delta_vs_last_week, delta_label, filled_green/amber/red, remaining, abs_gap, max_snap_date, diff_conv_snap, diff_porc.
+
+match_rate = DIVIDE(SUM(snapshot_paidsocial_qa_enriched[is_match]), COUNTROWS(...)) — is_match is computed in BigQuery, and per the on-canvas textbox it uses a 3% deviation rule, not 5%.
+
+>5% logic for conversions: does not exist.
+
+---
+
+5. DATA EXPORT VS QA METRIC COMPARISON
+
+Source of truth for the Data Export list: Paid Social Dashboard.Report\definition\pages\f9e58ce6aab5c6cca072\visuals\ec7751ac0396bdc72c3e\visual.json (page Data Export, tableEx). 10 dimension fields + 30 value fields.
+
+Source of truth for what QA covers today: the Snapshot summary documentation textbox 70882d0f840627e040c6\visuals\6ab295c05a2956da329b, which enumerates the metrics in the QA pipeline verbatim:
+
+▎ "...the metrics (spend, fiber_ec, cartstart, ec, metro_cartsatrt, metro_pqy, mpqt, pspv, qt_bts, qt_hint, qt_tbg, sec, tbg_ec, tmnoney)..."
+
+(typos in the original: metro_cartsatrt, metro_pqy, tmnoney). That's 14 metrics: spend + 13 conversions.
+
+┌─────┬──────────────────┬───────────────────────────────────┬─────────────────────────┬────────────────┬────────────┬──────────────────────────────┐
+│  #  │   Data Export    │    mrt_paidsocial_pivot column    │     QA metric_name      │ QA comparison  │  Missing   │        Action needed         │
+│     │      column      │                                   │                         │    exists?     │  from QA?  │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 1   │ Spend            │ spend                             │ spend                   │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 2   │ Impressions      │ [Total Impressions] (measure over │ —                       │ ❌ No          │ Yes        │ Data team: add impressions   │
+│     │                  │  impressions)                     │                         │                │            │ to int_qa_paidsocial         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 3   │ QT TBG           │ QT TFB                            │ qt_tbg                  │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 4   │ TFB HINT EC      │ TFB_HINT_EligibilityCheck         │ tbg_ec                  │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 5   │ TFB Leads        │ Lead                              │ tfb_leads               │ 🟡 Claimed     │ Verify     │ Verify live                  │
+│     │                  │                                   │                         │ added          │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 6   │ TBG Low Funnel   │ TBG_Low_Funnel_v7                 │ —                       │ ❌ No          │ Yes        │ Data team                    │
+│     │ v7               │                                   │                         │                │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 7   │ CartStart+       │ CartStart+                        │ cartstart               │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 8   │ Postpaid         │ Postpaid_CreditApp                │ creditapp               │ 🟡 Claimed     │ Verify     │ Verify live                  │
+│     │ CreditApp        │                                   │                         │ added          │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 9   │ PSTP PSPV Plus   │ Postpaid_PSPV_Plus                │ pspv                    │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 10  │ Postpaid Top     │ Postpaid_TopFunnel                │ —                       │ ❌ No          │ Yes        │ Data team                    │
+│     │ Funnel           │                                   │                         │                │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 11  │ Postpaid Web     │ Postpaid_Web_Order                │ —                       │ ❌ No          │ Yes        │ Data team                    │
+│     │ Order            │                                   │                         │                │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 12  │ QT BTS           │ QT BTS                            │ qt_bts                  │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 13  │ Base Add A Line  │ Base_Add_A_Line_CartStart         │ base_add_line_cartstart │ 🟡 Claimed     │ Verify     │ Verify live                  │
+│     │ CartStart        │                                   │                         │ added          │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 14  │ Base Upper       │ Base_Upper_Funnel                 │ —                       │ ❌ No          │ Yes        │ Data team                    │
+│     │ Funnel           │                                   │                         │                │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 15  │ TMobile          │ TMobile_UpperFunnel_Base          │ —                       │ ❌ No          │ Yes        │ Data team                    │
+│     │ UpperFunnel Base │                                   │                         │                │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 16  │ TMoneyUpper      │ TMoney_Upper_Funnel_Base          │ tmoney                  │ ✅ Yes         │ No         │ None                         │
+│     │ Funnel Base      │                                   │                         │                │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 17  │ Metro            │ Activation                        │ metro_activations       │ 🟡 Claimed     │ Verify     │ Verify live                  │
+│     │ Activations      │                                   │                         │ added          │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 18  │ Metro CartStart  │ Metro_CartStart                   │ metro_cartstart         │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 19  │ Metro PQT        │ QT Prepaid                        │ metro_pqt               │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 20  │ MPQT             │ QT Postpaid                       │ mpqt                    │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 21  │ Metro Mid Funnel │ Metro_PSPV_Plus                   │ —                       │ ❌ No          │ Yes        │ Data team                    │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 22  │ Metro Web Orders │ Metro_Web_Orders                  │ —                       │ ❌ No          │ Yes        │ Data team                    │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 23  │ SEC              │ SEC                               │ sec                     │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 24  │ QT HINT          │ QT HINT                           │ qt_hint                 │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 25  │ HINT Web Orders  │ HINT_WebOrders                    │ hint_weborders          │ 🟡 Claimed     │ Verify     │ Verify live                  │
+│     │                  │                                   │                         │ added          │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 26  │ EC               │ HINT_EligibilityFormSubmit        │ ec                      │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 27  │ Fiber EC         │ Fiber EC                          │ fiber_ec                │ ✅ Yes         │ No         │ None                         │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 28  │ Fiber SEC        │ Fiber_SEC                         │ —                       │ ❌ No          │ Yes        │ Data team                    │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 29  │ Fiber Upper      │ Fiber_Upper_Funnel                │ —                       │ ❌ No          │ Yes        │ Data team                    │
+│     │ Funnel           │                                   │                         │                │            │                              │
+├─────┼──────────────────┼───────────────────────────────────┼─────────────────────────┼────────────────┼────────────┼──────────────────────────────┤
+│ 30  │ Fiber Web Order  │ Fiber_Web_Order                   │ —                       │ ❌ No          │ Yes        │ Data team                    │
+└─────┴──────────────────┴───────────────────────────────────┴─────────────────────────┴────────────────┴────────────┴──────────────────────────────┘
+
+Tally: 14 covered + 5 newly added (claimed) + 11 still missing = 30.
+
+🚩 This is the headline finding. The Jira says "Add all metrics from Export Data Tab". The data team added 5. After those 5, 11 Data Export metrics still have no QA comparison: Impressions, TBG Low Funnel v7, Postpaid Top Funnel, Postpaid Web Order, Base Upper Funnel, TMobile UpperFunnel Base, Metro Mid Funnel, Metro Web Orders, Fiber SEC, Fiber Upper Funnel, Fiber Web Order.
+
+---
+
+6. STATUS OF THE 5 NEW METRICS
+
+All five of your proposed source mappings are verified correct against the actual Data Export visual definition and against mrt_paidsocial_pivot.tmdl.
+
+Metric:              metro_activations
+Source:              Paid Social Dashboard → Data Export → col "Metro Activations"
+                     = Sum(mrt_paidsocial_pivot[Activation])   ✅ VERIFIED (tmdl line 222)
+QA actual:           int_qa_paidsocial[conversions_improvado] WHERE metric_name='metro_activations'
+QA reference:        int_qa_paidsocial[conversions_4c]        WHERE metric_name='metro_activations'
+Variance logic:      Already generic — [diff_conv2] / [% diff conv2] apply to ANY metric_name.
+Already displayed?:  Automatically, IF the row exists in BigQuery — General page matrix
+                     9d8d103c1848efae3604 (rows = metric_name) and both ECV matrices
+                     (metric_name on Columns). NOT confirmable from the PBIP files (DirectQuery).
+Missing piece:       (a) live confirmation the metric_name exists;
+                     (b) no metric_name slicer on General → cannot isolate it at campaign level;
+                     (c) no >5% filter.
+Required change:     Report-only. No new mapping DAX needed.
+
+Metric:              base_add_line_cartstart
+Source:              "Base Add A Line CartStart" = Sum(mrt_paidsocial_pivot[Base_Add_A_Line_CartStart])  ✅ VERIFIED (line 489)
+QA actual/reference: conversions_improvado / conversions_4c WHERE metric_name='base_add_line_cartstart'
+Variance logic:      Generic (diff_conv2 / % diff conv2)
+Already displayed?:  Yes, if the row exists. Same caveats.
+Missing piece:       Same (a)(b)(c)
+Required change:     Report-only
+
+Metric:              creditapp
+Source:              "Postpaid CreditApp" = Sum(mrt_paidsocial_pivot[Postpaid_CreditApp])  ✅ VERIFIED (line 320)
+QA actual/reference: conversions_improvado / conversions_4c WHERE metric_name='creditapp'
+Variance logic:      Generic
+Already displayed?:  Yes, if the row exists
+Missing piece:       Same (a)(b)(c)
+Required change:     Report-only
+⚠️ Ambiguity: mrt_paidsocial_pivot also has Connect_ProspectQualityTraffic and no other
+   "creditapp"-like column, so Postpaid_CreditApp is the only candidate. Confirm with data team
+   that BQ maps creditapp → Postpaid_CreditApp and not some other credit-application field.
+
+Metric:              hint_weborders
+Source:              "HINT Web Orders" = Sum(mrt_paidsocial_pivot[HINT_WebOrders])  ✅ VERIFIED (line 342)
+QA actual/reference: conversions_improvado / conversions_4c WHERE metric_name='hint_weborders'
+Variance logic:      Generic
+Already displayed?:  Yes, if the row exists
+Missing piece:       Same (a)(b)(c)
+Required change:     Report-only
+
+Metric:              tfb_leads
+Source:              "TFB Leads" = Sum(mrt_paidsocial_pivot[Lead])  ✅ VERIFIED (line 212)
+QA actual/reference: conversions_improvado / conversions_4c WHERE metric_name='tfb_leads'
+Variance logic:      Generic
+Already displayed?:  Yes, if the row exists
+Missing piece:       Same (a)(b)(c)
+Required change:     Report-only
+⚠️ Note the display-name collision risk: the Data Export tab labels mrt[QT TFB] as "QT TBG"
+   and mrt[TFB_HINT_EligibilityCheck] as "TFB HINT EC". "TFB" and "TBG" are used
+   interchangeably here. Confirm tfb_leads maps to [Lead] and not to a TBG funnel field.
+
+What I could NOT verify from the files: both QA tables are mode: directQuery, so no data is cached. I confirmed this — I extracted QA Paid Social.pbix, scanned DataModel (589 KB) and .pbi\cache.abf in both ASCII and UTF-16: the strings metro_activations, base_add_line_cartstart, creditapp, hint_weborders, tfb_leads appear zero times; only the schema-level string metric_name (26 hits) is present. The list of live metric_name values must be confirmed against BigQuery or by opening the report.
+
+---
+
+7. WHAT IS ACTUALLY MISSING FOR PS-6189
+
+┌────────────────┬───────────────────────────────────────────────────────────────────────────────┬──────────────┬─────────────────────────────────┐
+│  Requirement   │                                Already exists?                                │   Missing?   │      Exact change required      │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ Spend QA       │                                                                               │              │                                 │
+│ (actual vs     │ ✅ spend_4c / spend_improvado                                                 │ —            │ None                            │
+│ reference)     │                                                                               │              │                                 │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ Spend variance │ ✅ % diff spend = DIVIDE([spend_4c]-[spend_improvado],[spend_4c])             │ —            │ None                            │
+│  %             │                                                                               │              │                                 │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ Spend >5%      │ ❌ Campaign matrix exists (2ab350d58a1db8976358) but has no variance filter;  │              │ Add abs % diff spend measure +  │
+│ campaign       │ thresholds in the report are 0.5%/3%                                          │ Yes          │ visual filter >= 0.05 on a      │
+│ filtering      │                                                                               │              │ campaign-grain matrix           │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ Conversion QA  │ ✅ conversions_4c / conversions_improvado                                     │ ⚠️ Partial   │ Works, but sums all             │
+│                │                                                                               │              │ metric_names together           │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ Conversion     │ ✅ % diff conv, % diff conv2                                                  │ —            │ None                            │
+│ variance %     │                                                                               │              │                                 │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ Conversion >5% │                                                                               │              │ Add abs % diff conv measure +   │
+│  campaign      │ ❌                                                                            │ Yes          │ visual filter >= 0.05; and add  │
+│ filtering      │                                                                               │              │ a metric_name slicer so it's    │
+│                │                                                                               │              │ per-metric                      │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ Metro          │ 🟡 Data claimed added; flows automatically                                    │ Verify + not │ Verify live; add metric_name    │
+│ Activations    │                                                                               │  isolatable  │ slicer                          │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ Base Add Line  │ 🟡 same                                                                       │ same         │ same                            │
+│ CartStart      │                                                                               │              │                                 │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ CreditApp      │ 🟡 same                                                                       │ same         │ same                            │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ HINT WebOrders │ 🟡 same                                                                       │ same         │ same                            │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ TFB Leads      │ 🟡 same                                                                       │ same         │ same                            │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ Other Data     │ ❌ 11 still absent (Impressions, TBG Low Funnel v7, Postpaid Top Funnel,      │              │ Data-team task — add to         │
+│ Export metrics │ Postpaid Web Order, Base Upper Funnel, TMobile UpperFunnel Base, Metro Mid    │ Yes          │ int_qa_paidsocial in BigQuery.  │
+│                │ Funnel, Metro Web Orders, Fiber SEC, Fiber Upper Funnel, Fiber Web Order)     │              │ Nothing to change in Power BI.  │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ metric_name    │                                                                               │              │                                 │
+│ slicer on      │ ❌ Not present                                                                │ Yes          │ Add one slicer                  │
+│ General        │                                                                               │              │                                 │
+├────────────────┼───────────────────────────────────────────────────────────────────────────────┼──────────────┼─────────────────────────────────┤
+│ 5% threshold   │                                                                               │              │ Decide: keep icons at 3% and    │
+│ convention     │ ❌ Report uses 0.5%/3%                                                        │ Yes          │ add a 5% filter (recommended),  │
+│                │                                                                               │              │ or re-threshold                 │
+└────────────────┴───────────────────────────────────────────────────────────────────────────────┴──────────────┴─────────────────────────────────┘
+
+Three consequences you should know about before anything changes
+
+1. Adding the 5 metrics silently changes existing QA numbers. conversions_4c / conversions_improvado are defined as metric_name <> "spend" — i.e. everything that isn't spend. The moment 5 new metric_names land in BigQuery, the Conversions columns on the Channel, Date, Account and Campaign matrices all get larger and their % diff conv shifts. Any previously-agreed conversion match rate will move. This is not a bug you introduce — it's already how the model behaves — but it will surprise the client if nobody says so.
+2. "Conversion variance" at campaign level is currently a heterogeneous sum. Adding QT + EC + CartStart + Leads + Activations into one number and taking a % of it is not what the client means by "Conversion variance > 5%". You need metric_name in the grain (slicer or matrix level) for that list to be defensible.
+3. % diff spend is signed. A filter > 0.05 catches only campaigns where Innovid is higher. "Variance > 5%" must be ABS(...) > 0.05.
+
+---
+
+8. EXACT CHANGES I RECOMMEND
+
+The existing architecture can be extended — it does not need replacing. The long-format metric_name design means zero per-metric DAX. Everything below is additive; nothing existing is removed or rewritten.
+
+Change 1 — two measures (the only model change)
+
+┌────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│            │                                                                                                                                      │
+├────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ PBIP       │ QA Paid Social                                                                                                                       │
+│ project    │                                                                                                                                      │
+├────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ File path  │ QA Paid Social.SemanticModel\definition\tables\_Measures.tmdl                                                                        │
+├────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Table      │ _Measures                                                                                                                            │
+├────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ New        │ abs % diff spend, abs % diff conv                                                                                                    │
+│ measures   │                                                                                                                                      │
+├────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Exact      │ Append two measures:<br>measure 'abs % diff spend' = ABS([% diff spend])<br>measure 'abs % diff conv' = ABS([% diff conv])<br>with   │
+│ change     │ formatString: 0.0%                                                                                                                   │
+├────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Reason     │ "Variance > 5%" is magnitude, not direction. A filter on the signed measure would silently drop every campaign where Improvado       │
+│            │ over-reports. Two one-line measures reuse the existing variance logic verbatim.                                                      │
+└────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Minimal alternative: skip these entirely and use a Power BI Advanced visual filter on % diff spend with is greater than 0.05 Or is less than -0.05. Zero model change. I still prefer the measures — they're sortable, reusable, and make the screenshot self-explanatory.
+
+Change 2 — one new page, cloned from General
+
+┌──────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│          │                                                                                                                                        │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ PBIP     │ QA Paid Social                                                                                                                         │
+│ project  │                                                                                                                                        │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ File     │ new QA Paid Social.Report\definition\pages\<new-guid>\page.json + visuals\…                                                            │
+│ path     │                                                                                                                                        │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Page     │ Campaign Variance > 5%                                                                                                                 │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Visuals  │ Copy of campaign matrix 2ab350d58a1db8976358; copies of slicers 406edf… (date), 829b2c… (date_month), 868671… (channel), ae09a7…       │
+│          │ (account), a1d4a5… (innovid); plus one new metric_name slicer; plus a copy of the legend textbox 23fc639657185e493b72                  │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Exact    │ On the copied matrix: keep rows campaign_name → campaign_id, keep all 8 existing measures, add abs % diff spend and abs % diff conv as │
+│ change   │  value columns, and add a visual-level Advanced filter: abs % diff spend >= 0.05. Change sort to abs % diff spend DESC. Register the   │
+│          │ page in pages.json pageOrder.                                                                                                          │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Reason   │ The Jira deliverable is a list/screenshot. Filtering the shared General page would break it for every other consumer. A new page is    │
+│          │ purely additive and reuses the existing matrix, measures, formats, icons and theme unchanged.                                          │
+└──────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Change 3 — a second matrix on the same page for conversions
+
+┌──────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│          │                                                                                                                                        │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Visual   │ Second copy of 2ab350d58a1db8976358 below the first                                                                                    │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Exact    │ Rows: campaign_name → campaign_id; add metric_name as a Columns projection (mirroring what ECV page 9968d03217278a45e447 already       │
+│ change   │ does). Values: conversions_4c, conversions_improvado, diff_conv, % diff conv, abs % diff conv. Visual filter: abs % diff conv >= 0.05  │
+│          │ and metric_name NOT IN {'spend'} (reuse the exact filter already on 9d8d103c1848efae3604).                                             │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Reason   │ Delivers "campaigns with Conversion variance > 5%" per metric, which is what the client requirement actually means. Reuses an existing │
+│          │  visual pattern already proven on the ECV page.                                                                                        │
+└──────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Change 4 — add a metric_name slicer to the General page
+
+┌─────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│         │                                                                                                                                         │
+├─────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ File    │ new QA Paid Social.Report\definition\pages\cab87c44900ac16391ef\visuals\<new-guid>\visual.json                                          │
+│ path    │                                                                                                                                         │
+├─────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Exact   │ Dropdown slicer on int_qa_paidsocial[metric_name], header 'Metric', placed in the free slot at roughly x≈490, y≈114 (the existing       │
+│ change  │ slicer row occupies x 12–469)                                                                                                           │
+├─────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Reason  │ Without it, the 5 new metrics are visible only in the aggregated metric_name matrix — you can't isolate one metric on the               │
+│         │ campaign/account/channel matrices. This is the single change that actually makes the new metrics usable, and it's one visual.           │
+└─────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Change 5 — fix the legend textbox (2-word edit)
+
+┌──────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│              │                                                                                                                                │
+├──────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ File path    │ QA Paid Social.Report\definition\pages\cab87c44900ac16391ef\visuals\23fc639657185e493b72\visual.json                           │
+├──────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Exact change │ "About signs: negative = 4C higher, positive = Improvado higher" → "positive = 4C/Innovid higher, negative = Improvado higher" │
+├──────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Reason       │ It contradicts diff_spend = [spend_4c]-[spend_improvado]. It will be in the client screenshot.                                 │
+└──────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Explicitly NOT recommended
+
+- ❌ Do not create per-metric measures (metro_activations_4c, etc.). The long-format model makes them redundant and you'd be adding 10+ measures per metric.
+- ❌ Do not re-threshold the 0.5%/3% icons to 5%. The Jira asks for a >5% list, not a recolouring; changing the icons would invalidate the existing is_match logic in BigQuery (also 3%) and every historical match-rate number on the Snapshot page.
+- ❌ Do not touch Paid Social Dashboard.pbip at all. It has no QA logic and needs none.
+- ❌ Do not modify int_qa_paidsocial.tmdl or snapshot_paidsocial_qa_enriched.tmdl. New metrics arrive as rows, not columns.
+
+---
+
+9. FILES / OBJECTS THAT WOULD CHANGE
+
+┌─────┬───────────────────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────┐
+│  #  │                                               File                                                │                 Change                  │
+├─────┼───────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+│ 1   │ QA Paid Social.SemanticModel\definition\tables\_Measures.tmdl                                     │ Modify — append 2 measures              │
+├─────┼───────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+│ 2   │ QA Paid Social.Report\definition\pages\pages.json                                                 │ Modify — add new page to pageOrder      │
+├─────┼───────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+│ 3   │ QA Paid Social.Report\definition\pages\<new-guid>\page.json                                       │ New — Campaign Variance > 5%            │
+├─────┼───────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+│ 4   │ QA Paid Social.Report\definition\pages\<new-guid>\visuals\*\visual.json                           │ New — ~9 visuals (2 matrices, 6         │
+│     │                                                                                                   │ slicers, 1 textbox)                     │
+├─────┼───────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+│ 5   │ QA Paid Social.Report\definition\pages\cab87c44900ac16391ef\visuals\<new-guid>\visual.json        │ New — metric_name slicer on General     │
+├─────┼───────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+│ 6   │ QA Paid                                                                                           │ Modify — legend sign wording            │
+│     │ Social.Report\definition\pages\cab87c44900ac16391ef\visuals\23fc639657185e493b72\visual.json      │                                         │
+└─────┴───────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────┘
+
+Untouched: the entire Paid Social Dashboard PBIP, both QA table .tmdl files, model.tmdl, report.json, the theme, and all existing General / ECV / Snapshot visuals.
+
+Out of Power BI entirely (data team): add the 11 remaining metric_names to prj-dbi-prd-1.ds_dbi_improvado.int_qa_paidsocial (and to snapshot_paidsocial_qa_enriched if they should count toward match rate).
+
+---
+
+10. HOW WE WILL GET THE >5% CAMPAIGN LIST
+
+Correct grain — and yes, campaign_name alone is not safe. The existing campaign matrix already uses campaign_name as level 1 and campaign_id as level 2 precisely because names collide (T-Mobile campaign names are long templated strings; the expansion state in the PBIP shows names like TMO_Postpaid_Voice_X_Perf_PSTPConv_Meta_Q2_2025_…_SOC-CMP-001 which differ only in trailing segments). The list must be keyed on campaign_id with campaign_name shown for readability.
+
+Recommended grain for the deliverable:
+
+campaign_id  (key)
+campaign_name  (label)
+channel        — available as slicer; add as a column since the same campaign_id
+                 can appear under multiple channels in this table
+account_name_4c — available as slicer; add as a column for traceability
+date range     — set via the date / date_month slicers
+metric_name    — required for the Conversions list; not applicable to Spend
+
+Does "Expanded Campaign Validation" already solve part of this? Partly — but less than it looks. It gives you campaign × metric_name at the right grain, and it is the only place metric_name is broken out per campaign. But:
+- It shows the two sides in two separate matrices (5e7ec61a52c09c6576c9 Innovid, 9968d03217278a45e447 Improvado), so you can't read a variance off it.
+- It has no diff, no % diff, no icons, no threshold.
+- So it solves grain, not variance. It cannot produce the >5% list.
+
+The page that actually gets you 90% of the way is the General page campaign matrix 2ab350d58a1db8976358 — it already has campaign_name + campaign_id rows and all four spend variance measures. It needs exactly one thing: a >= 5% filter on the absolute variance.
+
+---
+
+11. VALIDATION STEPS
+
+1. Which report page to open
+QA Paid Social.pbip → new page Campaign Variance > 5%.
+(Before the change: General, and scroll to the bottom matrix at y≈1240.)
+
+2. Which filters to set
+- Account slicer → All (or the specific account the client asked about)
+- Channel slicer → All
+- Innovid data slicer → confirm with the data team whether this should be restricted; it's an unlabelled flag column (data_innovid) with no documentation in either project. Leave at default and note the setting in the ticket.
+- Metric slicer (new) → not applicable for Spend; for Conversions, select one metric at a time or leave metric_name on the matrix columns.
+
+3. Which date range
+The Jira does not specify one. Use the Date Month slicer for a full calendar month — I'd use the last complete month — and state the exact range in the Jira comment. Do not use a partial current month: Innovid and Improvado land data on different lags, which manufactures variance that isn't real. Cross-check against the Snapshot summary page to see which snapshot_friday is the latest complete run.
+
+4. How to filter Spend variance >5%
+Visual-level filter on the Spend matrix: abs % diff spend → is greater than or equal to 0.05.
+(Without the new measure: Advanced filter on % diff spend → is greater than 0.05 Or is less than -0.05.)
+Sort by abs % diff spend descending.
+
+5. How to filter Conversion variance >5%
+Visual-level filter on the Conversions matrix: abs % diff conv → >= 0.05, plus metric_name is not spend. Sort by abs % diff conv descending.
+
+6. Columns visible in the screenshot
+
+Spend list: campaign_name | campaign_id | channel | account_name_4c | spend_4c | spend_improvado | diff_spend | % diff spend (with icon) | abs % diff spend
+
+Conversion list: campaign_name | campaign_id | metric_name | channel | conversions_4c | conversions_improvado | diff_conv | % diff conv (with icon) | abs % diff conv
+
+Include the date range in shot (the slicers sit at the top of the page) and the corrected legend textbox.
+
+7. Checked before calling the ticket complete
+
+- [ ] Confirm the 5 metric_names are actually live. Open the General page metric_name matrix (9d8d103c1848efae3604) and verify metro_activations, base_add_line_cartstart, creditapp, hint_weborders, tfb_leads appear as rows. I could not confirm this from the files — DirectQuery, nothing cached.
+- [ ] Tie each new metric back to Data Export. For one campaign and one day, conversions_improvado where metric_name='metro_activations' must equal the Data Export "Metro Activations" cell for the same campaign_id and date. Repeat for all 5. This is the only real proof the BigQuery mapping is right.
+- [ ] Re-check total row counts. count_rows_4c vs count_rows_improvado on the metric_name matrix: a new metric present on one side only shows up as a large diff_count and means the join is broken, not that variance is high.
+- [ ] Record the pre-change conversion totals, then confirm the post-change shift is explained entirely by the 5 new metrics (see §7 point 1).
+- [ ] Confirm the campaign_id grain is clean: no campaign_id appearing under two campaign_names, and no blank campaign_id rows carrying material spend.
+- [ ] State the scope gap in the Jira: 11 Data Export metrics remain uncovered. The ticket says "all metrics."
+- [ ] Verify the legend sign correction.
+- [ ] Verify nothing on General / Expanded Campaign Validation / Snapshot summary changed visually.
+
+---
+
+12. BLOCKERS / QUESTIONS
+
+Blockers (need an answer before I write code):
+
+1. I cannot confirm from the files which metric_name values are live. Both QA tables are DirectQuery; I extracted the .pbix and scanned DataModel + cache.abf — no data values at all. Either open QA Paid Social.pbip and read the metric_name matrix, or let me query prj-dbi-prd-1.ds_dbi_improvado.int_qa_paidsocial (I have Improvado MCP access, but I'd need you to confirm the right cluster/agency/workspace first — I won't query a production tenant on a guess).
+2. Scope: 5 metrics or all 30? The Jira says "all metrics from Export Data Tab." Only 5 were added. 11 are still missing and need the data team, not Power BI. Confirm whether PS-6189 closes at 5, or stays open until all 30 are covered.
+3. What does "Conversion variance" mean to the client? Per-metric (my recommendation, and the only defensible reading), or the current all-metrics-summed total? This determines whether the deliverable is one table or one table per metric.
+
+Questions (I have a default for each, and will proceed on it unless you say otherwise):
+
+4. 5% vs the existing 3% convention. Default: leave the 0.5%/3% icons alone, add the 5% filter as a separate view. Changing the icons would desynchronise the report from the is_match rule that already lives in BigQuery at 3%.
+5. Date range for the screenshot. Default: last complete calendar month, stated explicitly in the Jira comment.
+6. The data_innovid slicer. Undocumented flag column, labelled "Innovid data", on the General page only. Default: leave at its default selection and note it. Does it need a fixed value for the client deliverable?
+7. Should abs % diff be added to the existing General page matrices too, or only the new page? Default: new page only, to keep General byte-for-byte as it is.
+8. Signed vs absolute — confirming my read: "variance > 5%" means ABS(...) > 5%, catching over- and under-reporting on either side.
+9. creditapp and tfb_leads mapping confirmation from the data team. Both your proposed mappings are the only sensible candidates in mrt_paidsocial_pivot and I've verified they exist, but the TFB/TBG naming is used inconsistently across this report and I'd want the BigQuery model to confirm rather than infer.
+
+---
+
+No files were modified. Say the word and I'll implement §8 — or, if you'd rather, I can start with just Change 1 + Change 4 (two measures and one slicer) so you can eyeball the 5 new metrics live before committing to the new page. I can also publish this write-up as a shareable page if you want to attach it to the ticket.
+
+✻ Baked for 7m 50s · done 2:14 PM
+
+※ recap: Goal: close Jira PS-6189 by adding the missing Export Data metrics and a >5% variance campaign list to the QA Paid Social dashboard. Investigation is done and no files were touched. Next: your approval to implement the recommended changes. (disable recaps in /config)
+                                                                                                  control this session from your phone · /remote-control
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift
